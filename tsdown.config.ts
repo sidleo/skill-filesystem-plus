@@ -10,6 +10,23 @@ const EXTERNALS = [
   '@deepseek-ai/dsh-client-ui-attachment',
   '@deepseek-ai/dsh-client-schema-form',
 ]
+/**
+ * Peer/runtime dependencies provided by the DSH runtime at runtime (external
+ * in the host/preset bundles). Everything else — including
+ * `@deepseek-ai/schemastery` and its vendored `@deepseek-ai/cosmokit`
+ * dependency — must be BUNDLED, because the DSH loader does not expose them
+ * as importable modules: an external `import z from
+ * '@deepseek-ai/schemastery'` fails at runtime with ERR_MODULE_NOT_FOUND
+ * (seen when a profile links the plugin to a local checkout whose
+ * node_modules lacks the scoped package).
+ */
+const RUNTIME_EXTERNALS = [
+  ...EXTERNALS,
+  'yaml',
+  '@deepseek-ai/dsh-agent-presets',
+  '@deepseek-ai/dsh-skill',
+  '@deepseek-ai/dsh-client-runtime',
+]
 
 /**
  * Build config for @sidleo3/skill-filesystem-plus.
@@ -34,6 +51,8 @@ export default defineConfig([
     dts: { minify: false },
     sourcemap: true,
     clean: false,
+    external: [...RUNTIME_EXTERNALS],
+    noExternal: (id) => (RUNTIME_EXTERNALS.includes(id) ? undefined : true),
   },
   {
     name: 'skill-filesystem-plus/preset',
@@ -47,6 +66,8 @@ export default defineConfig([
     dts: { minify: false },
     sourcemap: true,
     clean: false,
+    external: [...RUNTIME_EXTERNALS],
+    noExternal: (id) => (RUNTIME_EXTERNALS.includes(id) ? undefined : true),
   },
   {
     name: 'skill-filesystem-plus/client',

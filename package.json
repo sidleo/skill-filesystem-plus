@@ -1,6 +1,6 @@
 {
   "name": "@sidleo3/skill-filesystem-plus",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "skill-filesystem-plus: per-preset takeover of dsh-skill-filesystem for DeepSeek Harness (DSH) — editable scan layers and parent dirs. GUI card stays visible across DSH upgrades; only presets the user enables use this provider. Renamed from @sidleo3/skill-scan.",
   "keywords": [
     "deepseek-harness",
