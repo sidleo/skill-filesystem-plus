@@ -36,20 +36,32 @@ pnpm typecheck    # tsc --noEmit
 
 ## 本地安装 / 生效流程（核心循环）
 
-本机 profile `web` 通过 `link:` 指向本目录，**代码改动 → 重建 → 重启 DSH Web GUI** 生效：
+本机 profile `web` 装的是 **npm 发布版**（`^0.2.4`），不是 link。两种生效路径：
 
-1. 改 `src/` 下代码
-2. `pnpm build`（lib 更新，link 自动反映）
-3. **用户重启 DSH Web GUI 进程**（插件是 profile bundle，只有重启才重新合成加载）
-4. 验证：**侧栏「插件」页 → 本插件卡片 → 配置**（配置页在那里，不在设置里）；或检查技能目录是否出现（如 `scan-demo`）
-
-接线命令（若 profile 丢了插件声明）：
+**A. 改代码要立即看效果（开发循环）**：
 
 ```bash
+dsh plugin --profile web remove @sidleo3/skill-filesystem-plus   # 先摘掉 npm 版
 dsh plugin --profile web add link:/Users/zhang3/yh_zhang3/Project/dsh插件/skill-filesystem-plus
+pnpm build
+# 重启 DSH Web GUI
 ```
 
-这会把 `@sidleo3/skill-filesystem-plus` 写进 `~/.dsh/profiles/web/package.json` 的 `dependencies` + `dsh.profile.bundles`。**两个都要在**，否则插件不会合成加载。
+**B. 验证线上包（发布后）**：
+
+```bash
+npm publish
+# 等 registry 的 tarball 可下载（NOT just `latest` tag —— 两者 CDN 不同步，
+# 元数据先更新、tarball 可能仍 404；见下）
+curl -s -o /dev/null -w "%{http_code}\n" https://registry.npmjs.org/@sidleo3/skill-filesystem-plus/-/skill-filesystem-plus-<ver>.tgz
+dsh plugin --profile web add @sidleo3/skill-filesystem-plus
+# 重启 DSH Web GUI
+```
+
+> 从 `link:` 切到 npm 版时 `dsh plugin add` 会报 `Already up to date`（pnpm 认为现有 spec 已满足）——必须**先 remove 再 add**。
+> 发布后立刻 `add` 会 `ERR_PNPM_FETCH_404`：`npm view ... version` 已经是新版本、但 tarball 还没上 CDN。此时 profile 会**自动回滚**（dependencies 与 bundles 都恢复原状），等 tarball 返回 200 再装即可。
+
+无论哪条路径，`@sidleo3/skill-filesystem-plus` 都要同时出现在 `~/.dsh/profiles/web/package.json` 的 `dependencies` **和** `dsh.profile.bundles` 里，否则插件不会合成加载。验证入口：**侧栏「插件」页 → 本插件卡片 → 配置**（配置页在那里，不在设置里）。
 
 ## 架构要点（改代码前先读）
 
