@@ -4,3 +4,5 @@ lib/
 dist/
 .DS_Store
 *.log
+pnpm-workspace.yaml
+artifacts/

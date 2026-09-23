@@ -19,6 +19,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { SkillProviderControl } from '@deepseek-ai/dsh-skill'
 import { DEFAULT_CONFIG, normalizeConfig, type SkillScanConfig } from './config.ts'
 import { makeSkillProvider, resolveDshHome, resolveUserHome, type ProviderFs } from './provider.ts'
+import { SkillWatcher } from './watcher.ts'
 
 export const name = 'skill-filesystem-plus'
 export const inject = ['skills']
@@ -78,9 +79,20 @@ export function apply(ctx: Context, config: Partial<SkillScanConfig> = {}): void
   // effect on the next catalog refresh without a restart.
   const readConfig = (): Promise<SkillScanConfig> => readConfigCached(ctx, fallback)
 
+  // Watch the discovered roots so skills added by an external IDE, git, or a
+  // shell command reach the catalog: the first-party `fs/observed` events
+  // below only cover the model's own writes. The watcher follows whatever
+  // roots the latest scan used, so editing the scan layers re-arms it.
+  const logger = (ctx as unknown as { logger?: { warn(message: string): void } }).logger
+  const watcher = new SkillWatcher(() => control?.invalidate(), logger)
+
   const provider = makeSkillProvider(
     readConfig,
-    { fs, home: () => resolveUserHome(ctx as unknown as { get(name: string): unknown }) },
+    {
+      fs,
+      home: () => resolveUserHome(ctx as unknown as { get(name: string): unknown }),
+      onRoots: roots => { void watcher.observeRoots(roots.map(r => r.root)) },
+    },
   )
 
   const unregister = skills.registerProvider((c) => { control = c; return provider })
@@ -95,6 +107,13 @@ export function apply(ctx: Context, config: Partial<SkillScanConfig> = {}): void
     if (actorName !== 'write' && actorName !== 'edit') return
     control?.invalidate()
   })
+
+  // Cordis effect disposal: release every watcher handle on unload, or a
+  // disabled preset would leak handles across reloads.
+  const effect = (ctx as unknown as { effect?: (fn: () => () => void) => unknown }).effect
+  if (typeof effect === 'function') {
+    effect.call(ctx, () => () => { void watcher.dispose() })
+  }
 
   void unregister
 }

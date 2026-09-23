@@ -9,17 +9,17 @@ A configurable skill discovery provider for [DeepSeek Harness](https://github.co
 ## Core design
 
 - **Install = no-op**: installing the plugin changes nothing — no preset is copied or modified, and the built-in \`skill-filesystem\` keeps working
-- **You decide the scope**: enable takeover per preset in the Web GUI (Settings → Plugins → 技能扫描)
-- **Full replacement**: for an enabled preset, its \`skill-filesystem\` row is \`disabled\` and a \`/preset\` provider row takes over; unselected presets keep built-in behavior untouched
-- **Removal restores**: unchecking restores the original preset from a backup, and \`skill-filesystem\` resumes
-- **Card survives DSH upgrades**: the host registers the \`skill-filesystem-plus\` settings namespace — the modern Settings "configurable plugins" page renders only cards whose namespace the host serves, which is the root cause of cards disappearing after DSH upgrades
+- **You decide the scope**: enable takeover per preset in the Web GUI (sidebar → Plugins → this plugin's config page)
+- **Full replacement**: for an enabled preset, a \`preset-<id>\` override row is written into the profile's \`cordis.patch.yml\` (built-in \`skill-filesystem\` marked \`disabled\`, this plugin's \`/preset\` provider row appended); unselected presets keep built-in behavior untouched
+- **Removal is surgical**: unchecking deletes only this plugin's own override row, leaving every other patch entry byte-identical
+- **Config page survives DSH upgrades**: the page registers into the sidebar Plugins page's \`plugins.bundle.config\` slot (keyed by package name), and the settings live in this plugin's own JSON file — no dependency on DSH settings namespaces
 
 ## Features
 
 - **Four scanning layers**: cwd (highest) → project/parents (mutually exclusive) → global (lowest)
 - **scanParents mode**: walk every ancestor from cwd upward — no depth limit
 - **Editable parent dirs**: default \`.dsh\`, \`.agents\`; add/remove/rename freely, drag to reorder (top = highest priority)
-- **Web GUI card**: Settings → Plugins → 技能扫描 — per-preset takeover + four-layer scan config + root preview
+- **Config page**: sidebar → Plugins → this plugin — per-preset takeover + four-layer scan config + root preview
 - **Live invalidation**: a model \`write\`/\`edit\` touching a \`<…>/skills/\` path invalidates the catalog immediately
 
 ## Installation
@@ -36,11 +36,11 @@ Restart DSH after installing. **No further action needed** — the plugin touche
 
 ## Usage: enable per preset in the GUI
 
-1. Open Settings → Plugins → **技能扫描**
-2. Check the presets to take over (multi-select; only presets carrying a \`skill-filesystem\` row are listed)
-3. Takes effect on **newly created sessions**: the preset's \`skill-filesystem\` row is disabled and a \`@sidleo3/skill-filesystem-plus/preset\` provider row is inserted (at \`~/.dsh/.agent-presets/<id>/agent.cordis.yml\`)
-4. Sessions on that preset use this plugin's four-layer discovery
-5. Unchecking restores the original config from \`.skill-filesystem-plus-backup/\` and \`skill-filesystem\` resumes (for new sessions)
+1. Open the sidebar **Plugins** page and enter this plugin's **config** page
+2. Check the presets to take over (multi-select; only presets that can be taken over are listed)
+3. A \`- id: preset-<id>\` override row is written into the profile's \`cordis.patch.yml\`: it copies the preset's shipped plugin rows verbatim, marks \`skill-filesystem\` with \`disabled: true\`, and appends the \`@sidleo3/skill-filesystem-plus/preset\` row
+4. **Restart DSH**; sessions created afterwards on that preset use this plugin's four-layer discovery
+5. Unchecking deletes only this plugin's own override row, leaving other patch entries untouched
 
 > Running sessions are unaffected (preset composition is fixed at session creation); changes apply to sessions created afterwards.
 
@@ -60,11 +60,13 @@ Persisted at \`~/.dsh/dsh-skill-filesystem-plus.json\` (legacy \`dsh-skill-scan.
 
 ## How it works
 
-1. **Install = no-op**: the host entry only registers the settings namespace + GUI RPC, and never touches a preset
-2. **User picks presets**: the GUI calls \`/api/skill-filesystem-plus/presets/apply\`; the host reads the preset via \`ctx.agentPresets\` → backs it up → disables the \`skill-filesystem\` row → inserts the \`/preset\` provider row
-3. **Discovery**: the \`/preset\` row's provider registers into that preset's layer of the skills registry (\`skills.registerProvider\` is scope-aware) and runs four-layer discovery, fully replacing built-in discovery
-4. **Removal**: the GUI calls \`/api/skill-filesystem-plus/presets/remove\`, restoring the original config from \`.skill-filesystem-plus-backup/\`
+1. **Install = no-op**: the host entry only exposes GUI RPC + declares the \`Config\` schema, and never touches a preset
+2. **User picks presets**: the GUI calls \`/api/skill-filesystem-plus/presets/apply\`; the host reads the shipped composition (the declarative \`dsh-agent-preset\` row's \`presets/<id>.patch.yml\`) → backs up the profile patch → writes a \`preset-<id>\` override row into \`cordis.patch.yml\`
+3. **Discovery**: that preset layer's \`/preset\` provider registers scope-aware (\`skills.registerProvider\`) and runs four-layer discovery, fully replacing built-in discovery
+4. **Removal**: the GUI calls \`/api/skill-filesystem-plus/presets/remove\`, deleting only this plugin's own \`preset-<id>\` row
 5. **Config live-reload**: the provider re-reads the disk config through \`ctx.fs\` on every \`list\`, so a GUI save takes effect on the next catalog refresh
+
+> Override rows use **replace** (not merge) semantics, so the row must copy the preset's whole plugin list. Editing is **line-based, never parse→re-serialize**: preset rows carry \`!!js\` tags (e.g. \`disabled: !!js process.platform === 'win32'\`), and a full round-trip would evaluate them to strings — \`disabled\` would then read as truthy and the shell tools would silently disappear.
 
 ## Why "replace" matters
 
@@ -80,8 +82,16 @@ pnpm typecheck    # tsc --noEmit
 
 ## Notes
 
-- After a DSH upgrade overwrites a built-in preset, already-taken-over presets may be reset; uncheck and re-check in the GUI to rebuild from the new version (the backup mechanism keeps removal safe)
+- After a DSH upgrade rewrites the shipped preset composition, an existing override row may become stale; uncheck and re-check in the GUI to rebuild it from the installed version
 - \`skill-scan-blueprint/\` keeps the pre-rename dynamic-plugin form for reference (not part of the build)
+
+## Compatibility
+
+Built for **DSH 0.1.7-alpha** and later:
+
+- The config page registers into the sidebar Plugins page's \`plugins.bundle.config\` slot (as of 0.1.7 the Settings "Plugins" section is a read-only built-in inventory, and the old \`settings.plugin.item\` slot no longer exists)
+- Preset takeover writes override rows into the profile's \`cordis.patch.yml\` (\`agentPresetRegistry.list()\`/\`resolve()\` return display metadata only — no composition path, no read/write)
+- Settings still persist in this plugin's own \`~/.dsh/dsh-skill-filesystem-plus.json\`
 
 ## License
 

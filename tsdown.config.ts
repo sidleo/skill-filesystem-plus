@@ -23,7 +23,9 @@ const EXTERNALS = [
 const RUNTIME_EXTERNALS = [
   ...EXTERNALS,
   'yaml',
-  '@deepseek-ai/dsh-agent-presets',
+  'chokidar',
+  '@deepseek-ai/dsh-agent-preset',
+  '@deepseek-ai/dsh-agent-preset-registry',
   '@deepseek-ai/dsh-skill',
   '@deepseek-ai/dsh-client-runtime',
 ]
@@ -32,7 +34,7 @@ const RUNTIME_EXTERNALS = [
  * Build config for @sidleo3/skill-filesystem-plus.
  *
  * Three outputs:
- *  - host   → lib/index.js  (ESM host entry: settings namespace, GUI RPC, preset manager)
+ *  - host   → lib/index.js  (ESM host entry: GUI RPC, preset manager)
  *  - preset → lib/preset.js (ESM session-plane entry: skill-filesystem-plus provider,
  *             inserted into a copied agent preset by the wizard)
  *  - client → lib/client.js (CJS factory wrapped in window.__ModuleLoader__.load;

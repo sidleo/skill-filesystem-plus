@@ -3,12 +3,15 @@
  *
  * A configurable skill discovery provider for DeepSeek Harness. Replaces the
  * fixed discovery of `dsh-skill-filesystem` — but only in presets the USER
- * explicitly enables. Installation changes nothing: this host entry registers
- * the settings namespace (which keeps the GUI card visible across DSH
- * upgrades) and a browser-facing JSON RPC surface (config get/set, roots
- * preview, discovery debug, preset takeover status and apply/remove). No
- * preset is copied or modified until the user picks one in the GUI; removing
- * a preset restores the built-in skill-filesystem row untouched.
+ * explicitly enables. Installation changes nothing: this host entry exposes a
+ * browser-facing JSON RPC surface (config get/set, roots preview, discovery
+ * debug, preset takeover status and apply/remove). No preset is touched until
+ * the user picks one in the GUI; removing a preset drops only this plugin's
+ * override row.
+ *
+ * The configuration page lives on the sidebar Plugins page (the
+ * `plugins.bundle.config` slot) and edits this plugin's own JSON file through
+ * the RPC surface below.
  *
  * @module @sidleo3/skill-filesystem-plus
  */
@@ -38,6 +41,7 @@ import {
 export type { SkillScanConfig, ParentDir } from './config.ts'
 export { DEFAULT_CONFIG, normalizeConfig, loadConfig, persistConfig } from './config.ts'
 export { makeSkillProvider, computeRoots, listRoot, decodeSkill } from './provider.ts'
+export { SkillWatcher, DEFAULT_WATCH_CONFIG, type WatchConfig } from './watcher.ts'
 export { applyPreset, removePreset, listPresets, readTakeoverState, type PresetStatus, type TakeoverState } from './wizard.ts'
 
 export const name = 'skill-filesystem-plus'
@@ -46,30 +50,33 @@ export const name = 'skill-filesystem-plus'
 // agent-instructions-plus).
 export const inject = ['webServer'] as const
 
-// ── Settings namespace ─────────────────────────────────────────────
-// Register the namespace our config card edits. DSH's configurable-plugins
-// tab renders only cards whose key is a HOST-served settings namespace;
-// registering here keeps the card visible across DSH upgrades. The settings
-// service is optional and may compose after this host apply, so declare the
-// dependency via inject and register inside its callback.
-function registerSettingsNamespace(ctx: Context, config: SkillScanConfig): void {
-  ctx.inject(['settings'], (settingsCtx) => {
-    const settingsSvc = settingsCtx.get('settings') as
-      | { register(ns: string, schema: unknown): unknown }
-      | undefined
-    if (settingsSvc === undefined) return
-    settingsSvc.register(
-      'skill-filesystem-plus',
-      z.object({
-        scanCwd: z.boolean().default(true),
-        scanProject: z.boolean().default(true),
-        scanParents: z.boolean().default(false),
-        scanGlobal: z.boolean().default(true),
-        parentDirs: z.array(z.object({ name: z.string() })).default([{ name: '.dsh' }, { name: '.agents' }]),
-      }),
-    )
-  })
+// ── Config schema ───────────────────────────────────────────────────
+// `SettingsForms.register()` no longer exists in DSH 0.1.7 (the service now
+// derives forms from each Loader entry's own `Config` schema), so the plugin
+// declares its schema the standard way instead of registering a namespace.
+// The Loader resolves this and hands the parsed values to `apply(ctx, config)`.
+// The config surface itself still lives in this plugin's own JSON file
+// (`~/.dsh/dsh-skill-filesystem-plus.json`), which takes precedence.
+// Declared as a mutable interface: schemastery's inferred object type is
+// mutable, and `SkillScanConfig`'s readonly members are not assignable to it.
+// The explicit annotation also keeps the generated .d.ts portable — an
+// inferred type would reference schemastery's vendored cosmokit through a
+// pnpm-internal path.
+export interface PluginConfig {
+  scanCwd: boolean
+  scanProject: boolean
+  scanParents: boolean
+  scanGlobal: boolean
+  parentDirs: { name: string }[]
 }
+
+export const Config: z<PluginConfig> = z.object({
+  scanCwd: z.boolean().default(true),
+  scanProject: z.boolean().default(true),
+  scanParents: z.boolean().default(false),
+  scanGlobal: z.boolean().default(true),
+  parentDirs: z.array(z.object({ name: z.string() })).default([{ name: '.dsh' }, { name: '.agents' }]),
+})
 
 // ── Plugin entry ────────────────────────────────────────────────────
 
@@ -85,8 +92,6 @@ export function apply(ctx: Context, config: SkillScanConfig = DEFAULT_CONFIG): v
     persistConfig(seeded)
     cfg = seeded
   }
-
-  registerSettingsNamespace(ctx, cfg)
 
   // ── HTTP RPC surface ────────────────────────────────────────────
   const webServer = ctx.get('webServer') as

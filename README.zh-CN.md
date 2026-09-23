@@ -9,10 +9,10 @@
 ## 核心设计
 
 - **安装零改动**：插件安装后不做任何事，不复制、不修改任何 preset，内置 `skill-filesystem` 照常工作
-- **用户决定生效范围**：在 Web GUI（Settings → Plugins → 技能扫描）里勾选要接管的 preset（多选）
-- **完全替代**：勾选某个 preset 后，该 preset 配置中内置 `skill-filesystem` 行被 `disabled`，由本插件的 `/preset` provider 行接管；未勾选的 preset 完全保持内置行为
-- **取消即恢复**：取消勾选从备份恢复原始配置，`skill-filesystem` 恢复工作
-- **配置卡片跨 DSH 升级稳定**：Host 注册 `skill-filesystem-plus` settings namespace，新版 Settings 的「可配置插件」页只渲染 Host 提供 namespace 的卡片——这是 DSH 升级后卡片消失的根因，注册后卡片始终可见
+- **用户决定生效范围**：在 Web GUI（侧栏 → 插件 → 本插件的配置页）里勾选要接管的 preset（多选）
+- **完全替代**：勾选某个 preset 后，profile 的 `cordis.patch.yml` 里写入该 preset 的 `preset-<id>` 覆盖行（内置 `skill-filesystem` 行 `disabled`，并接入本插件的 `/preset` provider 行）；未勾选的 preset 完全保持内置行为
+- **取消即恢复**：取消勾选只删除本插件自己那条覆盖行，其余 patch 条目逐字节不变
+- **配置页跨 DSH 升级稳定**：页面注册进侧栏插件页的 `plugins.bundle.config` 插槽（以包名为 key），配置数据存在本插件自己的 JSON 文件里，不依赖 DSH 的设置命名空间
 
 ## 功能
 
@@ -28,7 +28,7 @@
 - **技能格式** — 目录包（`<名称>/SKILL.md`）与平铺 Markdown 文件（`<名称>.md`）；解析 frontmatter 的 `name`、`description`、`whenToUse`、`disable-model-invocation`、`user-invocable`。
 - **重名裁决** — 不同名技能全部加载；同名的只保留优先级最高（rank 最小）者。
 - **即时失效** — 模型 `write`/`edit` 命中 `<…>/skills/` 路径时立即刷新技能目录。
-- **可折叠插件卡片** — 设置 → 插件 → 插件配置，与内置卡片视觉一致（同一套 `--dsw-alias-*` token 与箭头图标）。
+- **独立配置页** — 侧栏 → 插件 → 本插件卡片 → 配置，与内置插件配置页同一套 `--dsw-alias-*` token。
 
 ## 安装
 
@@ -51,17 +51,17 @@ dsh plugin --profile <profile> add link:<仓库路径>
 
 ## 使用：在 GUI 中按 preset 启用
 
-1. 打开 Settings → Plugins → **技能扫描**
-2. 在「生效的预设」列表里勾选要接管的 preset（多选，仅列出含 `skill-filesystem` 行的预设）
-3. 勾选后立即生效于**之后新建**的会话：该 preset 的 `skill-filesystem` 行被禁用，插入 `@sidleo3/skill-filesystem-plus/preset` provider 行（位于 `~/.dsh/.agent-presets/<id>/agent.cordis.yml`）
-4. 新会话选择该 preset 时，使用本插件的四层扫描发现技能
-5. 取消勾选 = 从 `.skill-filesystem-plus-backup/` 恢复原始配置，`skill-filesystem` 恢复工作（新建会话生效）
+1. 打开侧栏 **插件**，找到本插件卡片，进入它的**配置**页
+2. 在「生效的预设」列表里勾选要接管的 preset（多选，只列出可接管的预设）
+3. 勾选后写入 profile 的 `cordis.patch.yml`：新增一条 `- id: preset-<id>` 覆盖行，整份复制该预设的内置插件行、把 `skill-filesystem` 标为 `disabled: true`，并在末尾追加 `@sidleo3/skill-filesystem-plus/preset` 行
+4. **重启 DSH** 后，新会话选择该 preset 时使用本插件的四层扫描发现技能
+5. 取消勾选 = 只删除本插件那条覆盖行，其他 patch 条目一字不动
 
 > 已运行中的会话不受勾选/取消影响（preset 组合在会话创建时固定）；改动对**之后新建**的会话生效。
 
 ## 配置
 
-所有设置都在插件卡片里（**设置 → 插件 → 插件配置 → 技能扫描**）：
+所有设置都在插件配置页里（**侧栏 → 插件 → 本插件 → 配置**）：
 
 - 四个层级开关。
 - 上级目录列表：拖动排序优先级、逐行删除。
@@ -73,11 +73,13 @@ dsh plugin --profile <profile> add link:<仓库路径>
 
 ## 工作原理
 
-1. **Install = no-op**：host 入口只注册 settings namespace + GUI RPC，不碰任何 preset
-2. **User picks presets**：GUI 调 `/api/skill-filesystem-plus/presets/apply`，host 用 `ctx.agentPresets` 读取该 preset 配置 → 备份 → 禁用 `skill-filesystem` 行 → 插入 `/preset` provider 行
-3. **Discovery**：副本 preset 中 `/preset` 行的 provider 在**该预设层**注册 provider（`skills.registerProvider` 是 scope-aware），按四层扫描发现技能，完全替代内置发现
-4. **Removal**：GUI 调 `/api/skill-filesystem-plus/presets/remove`，从 `.skill-filesystem-plus-backup/` 恢复原始配置
+1. **Install = no-op**：host 入口只暴露 GUI RPC + 声明 `Config` schema，不碰任何 preset
+2. **User picks presets**：GUI 调 `/api/skill-filesystem-plus/presets/apply`，host 读取内置预设组合（`dsh-agent-preset` 声明式行的 `presets/<id>.patch.yml`）→ 备份 profile patch → 在 `cordis.patch.yml` 写入 `preset-<id>` 覆盖行（内置行逐行抄录，`skill-filesystem` 标 `disabled: true`，追加 `/preset` 行）
+3. **Discovery**：该 preset 层里 `/preset` 行的 provider 在**该预设层**注册（`skills.registerProvider` 是 scope-aware），按四层扫描发现技能，完全替代内置发现
+4. **Removal**：GUI 调 `/api/skill-filesystem-plus/presets/remove`，只删除本插件那条 `preset-<id>` 覆盖行
 5. **Config live-reload**：provider 每次 `list` 都通过 `ctx.fs` 重读磁盘配置，GUI 保存后下一次目录刷新即生效
+
+> patch 用的是 **replace** 语义（不是 merge），所以覆盖行必须整份复制该预设的插件行；编辑一律按**行**进行，绝不 parse→re-serialize——预设行含 `!!js` 标签（如 `disabled: !!js process.platform === 'win32'`），整份解析会把标签求值成字符串，`disabled` 变成真值导致 shell 工具静默消失。
 
 ## 为什么需要「替换」
 
@@ -95,7 +97,15 @@ pnpm build      # tsdown → lib/index.js + lib/preset.js + lib/client.js
 npm publish
 ```
 
-> 宿主端依赖 DSH 私有包（`@deepseek-ai/dsh-skill`、`@deepseek-ai/dsh-agent-presets` 等）。请在能解析到这些包（npm 上以 `-rc` 发布）的环境中构建；本包将其声明为 `peerDependencies` / `devDependencies`。
+> 宿主端依赖 DSH 私有包（`@deepseek-ai/dsh-skill`、`@deepseek-ai/dsh-agent-preset`、`@deepseek-ai/dsh-agent-preset-registry` 等）。请在能解析到这些包的环境中构建；本包将其声明为 `peerDependencies` / `devDependencies`。
+
+## 兼容性
+
+适配 **DSH 0.1.7-alpha** 起：
+
+- 配置页位于侧栏插件页的 `plugins.bundle.config` 插槽（0.1.7 起 Settings 的「插件」分区变为只读内置清单，旧的 `settings.plugin.item` 插槽已不存在）
+- 预设接管通过 profile 的 `cordis.patch.yml` 覆盖行实现（`agentPresetRegistry` 的 `list()`/`resolve()` 只返回展示元信息，没有组合路径、没有 read/write）
+- 配置数据仍存本插件自己的 `~/.dsh/dsh-skill-filesystem-plus.json`
 
 ## License
 

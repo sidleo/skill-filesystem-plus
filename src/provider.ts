@@ -92,6 +92,15 @@ export async function listRoot(
   let entries
   try { entries = await fs.listDir(target) } catch { return out }
   for (const entry of entries) {
+    // Dot-entries are never skills: they are tooling state and editor/backup
+    // residue that happens to sit beside real skills. A directory like
+    // `.retail-business-report.bak.20260609_113104/` carries a `SKILL.md`
+    // whose frontmatter repeats the live skill's `name`, so scanning it adds a
+    // same-name, same-rank duplicate and the winner is decided by scan order —
+    // an old backup can shadow the real skill. The scan ROOTS are unaffected:
+    // `.dsh`/`.agents`/`.pi` are path components chosen by config, not
+    // entries listed here.
+    if (entry.name.startsWith('.')) continue
     if (entry.type === 'directory') {
       const s = await decodeSkill(fs, join(entry.target.displayPath, 'SKILL.md'))
       if (s) out.push(s)
@@ -108,6 +117,11 @@ export interface ScanDeps {
   fs?: ProviderFs
   /** Resolve the USER home directory (global-layer base `~/<parentDir>/skills`). */
   home?: HomeResolver
+  /**
+   * Called with the resolved roots on every discovery, so a watcher can follow
+   * the current scan layers (they change when the user edits the config).
+   */
+  onRoots?: (roots: readonly SkillRoot[]) => void
 }
 
 export async function computeRoots(
@@ -184,6 +198,9 @@ export function makeSkillProvider(
       const cwd = typeof options.cwd === 'string' && options.cwd.length > 0 ? options.cwd : undefined
       if (options.signal?.aborted) return []
       const roots = await computeRoots(cfg, cwd, deps)
+      // Let the watcher follow the roots this scan actually used; it ignores
+      // the call when the set is unchanged.
+      try { deps.onRoots?.(roots) } catch { /* watching is best-effort */ }
       const candidates: SkillCandidate[] = []
       for (const r of roots) {
         if (options.signal?.aborted) return candidates
